@@ -1,0 +1,20 @@
+# Log-based alerts. Owner: Kofi (SRE). Changes need SRE review (CONTRIBUTING.md).
+#
+# The log pipeline checks every raw log line against each `match` as a
+# case-insensitive substring. That works for the old hl_log lines and the new
+# JSON lines alike.
+
+- name: PaymentsDeclineSpike
+  match: "payment declined"
+  threshold: 20 in 5m
+  page: payments-oncall
+
+- name: TrackingFeedStale
+  match: "tracking feed stale"
+  threshold: 1 in 15m
+  page: ops-oncall
+
+- name: BookingLaneFull
+  match: "no capacity on lane"
+  threshold: 10 in 10m
+  page: ops-oncall
