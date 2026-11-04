@@ -15,13 +15,14 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from logmig_progress import END, START, build_body, gh, row_of
+from logmig_progress import END, START, gh, row_of
 
 API = "https://api.devin.ai/v3"
 BASE_TAG = "logmig"
@@ -205,11 +206,12 @@ class Issue:
         made = json.loads(gh(f"repos/{self.repo}/issues/{self.number}/comments", "-f", f"body={body}"))
         return made["id"]
 
-    def rebuild(self):
-        issue = json.loads(gh(f"repos/{self.repo}/issues/{self.number}"))
-        new = build_body(issue["body"], self.comments())
-        if new != issue["body"]:
-            gh("-X", "PATCH", f"repos/{self.repo}/issues/{self.number}", "-f", f"body={new}")
+
+
+def request_rebuild(repo, issue):
+    """Have the `logmig progress` workflow rebuild the table, so all rebuilds share its concurrency
+    group (comments made with GITHUB_TOKEN don't trigger it on their own)."""
+    subprocess.run(["gh", "workflow", "run", "logmig-progress.yml", "-R", repo, "-f", f"issue={issue}"], check=True)
 
 
 def summary(lines):
@@ -267,7 +269,7 @@ def run(a, repo, devin, issue):
             issue.upsert_row({"id": cid}, row_text(repo, svc, "in progress", session_url=s["url"]))
         except Exception as e:
             print(f"WARN {svc}: session started ({s['url']}) but its row could not be updated: {e}")
-    issue.rebuild()
+    request_rebuild(repo, a.issue)
     return 1 if failed else 0
 
 
@@ -291,7 +293,7 @@ def stop(a, repo, devin, issue):
         issue.upsert_row(existing, row_text(repo, svc, "stopped", pr.replace("\\|", "|"),
                                             checker.replace("\\|", "|"), s.get("url", "")))
         print(f"stopped {svc}: {s.get('url')}")
-    issue.rebuild()
+    request_rebuild(repo, a.issue)
     return 0
 
 

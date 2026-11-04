@@ -114,3 +114,20 @@ def test_row_update_failure_after_create_does_not_mark_dispatch_failed(no_github
     assert d.run(args(), REPO, devin, issue) == 0
     assert len(devin.created) == 1
     assert not any("dispatch failed" in w for w in issue.writes)
+
+
+def workflow(name):
+    import yaml
+    wf = yaml.safe_load((Path(__file__).resolve().parents[1] / ".github/workflows" / name).read_text())
+    return wf, wf.get("on", wf.get(True))
+
+
+def test_rebuilds_go_through_the_progress_workflow(monkeypatch):
+    calls = []
+    monkeypatch.setattr(d.subprocess, "run", lambda cmd, check: calls.append(cmd))
+    d.request_rebuild(REPO, 4)
+    assert calls == [["gh", "workflow", "run", "logmig-progress.yml", "-R", REPO, "-f", "issue=4"]]
+    wf, on = workflow("logmig-progress.yml")
+    assert "workflow_dispatch" in on and "inputs.issue" in wf["concurrency"]["group"]
+    for name in ("logmig-run.yml", "logmig-stop.yml"):
+        assert workflow(name)[0]["permissions"]["actions"] == "write"

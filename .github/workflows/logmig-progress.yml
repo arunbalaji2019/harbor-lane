@@ -2,17 +2,24 @@ name: logmig progress
 on:
   issue_comment:
     types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Tracking issue number"
+        required: true
 # One run at a time; every run rebuilds the whole table from all row comments,
 # so a skipped intermediate run loses nothing.
 concurrency:
-  group: logmig-progress-${{ github.event.issue.number }}
+  group: logmig-progress-${{ github.event.issue.number || inputs.issue }}
   cancel-in-progress: false
 permissions:
   issues: write
   contents: read
 jobs:
   table:
-    if: contains(github.event.issue.body, '<!-- logmig-table:start -->') && github.event.issue.pull_request == null
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.issue.body, '<!-- logmig-table:start -->') && github.event.issue.pull_request == null)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,4 +28,5 @@ jobs:
           python-version: "3.11"
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/logmig_progress.py --repo "${{ github.repository }}" --issue "${{ github.event.issue.number }}"
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: python scripts/logmig_progress.py --repo "$GITHUB_REPOSITORY" --issue "$ISSUE"
