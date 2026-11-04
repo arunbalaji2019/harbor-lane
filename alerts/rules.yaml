@@ -18,3 +18,11 @@
   match: "no capacity on lane"
   threshold: 10 in 10m
   page: ops-oncall
+
+# BookingLaneFull for bookings' harbor_obs JSON lines (logmig). Same threshold and
+# page as BookingLaneFull. Both rules stay while old and new bookings builds run;
+# delete BookingLaneFull in a follow-up PR once every instance runs harbor_obs.
+- name: BookingLaneFullJson
+  match: '"service": "bookings", "event": "lane_no_capacity"'
+  threshold: 10 in 10m
+  page: ops-oncall
