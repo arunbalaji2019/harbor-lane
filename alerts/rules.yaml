@@ -9,6 +9,14 @@
   threshold: 20 in 5m
   page: payments-oncall
 
+# PaymentsDeclineSpike for payments' harbor_obs JSON lines (logmig). Same threshold and
+# page as PaymentsDeclineSpike. Both rules stay while old and new payments builds run;
+# delete PaymentsDeclineSpike in a follow-up PR once every instance runs harbor_obs.
+- name: PaymentsDeclineSpikeJson
+  match: '"service": "payments", "event": "payment_declined"'
+  threshold: 20 in 5m
+  page: payments-oncall
+
 - name: TrackingFeedStale
   match: "tracking feed stale"
   threshold: 1 in 15m
