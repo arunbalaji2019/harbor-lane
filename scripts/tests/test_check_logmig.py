@@ -191,3 +191,80 @@ def test_failing_base_tests_fail_the_check(make_repo):
 def test_value_masked_by_another_event_fails(make_repo):
     app = GOOD_APP.replace('log.warning("lane_full", lane=lane, wanted=n)', 'log.warning("lane_full", lane=lane)')
     assert_fails(make_repo({"services/svc/app.py": app}), "nothing lost", "lane full LB wanted=3")
+
+
+def test_nested_personal_data_fails(make_repo):
+    app = GOOD_APP.replace('log.info("job_done", lane=lane, size=n)',
+                           'log.info("job_done", lane=lane, size=n, contact={"email": "ops@harbor.example"})')
+    assert_fails(make_repo({"services/svc/app.py": app}), "personal data", "contact.email")
+
+
+def test_reports_redact_personal_data(make_repo):
+    app = GOOD_APP.replace('log.info("job_done", lane=lane, size=n)',
+                           'log.info("job_done", lane=lane, size=n, note="call +44 20 7946 0958 or ops@harbor.example")')
+    code, out = check(make_repo({"services/svc/app.py": app}))
+    assert code == 1 and "personal data" in out, out
+    assert "ops@harbor.example" not in out and "7946 0958" not in out, out
+
+
+def test_lowercase_value_dropped_from_a_line_fails(make_repo):
+    tests = TESTS.replace('"LA"', '"atlanta"').replace('"LB"', '"boston"')
+    app = GOOD_APP.replace('log.info("job_started", lane=lane, size=n)', 'log.info("job_started", size=n)')
+    root = make_repo({"services/svc/app.py": app, "tests/test_svc.py": tests}, base={"tests/test_svc.py": tests})
+    assert_fails(root, "nothing lost", "atlanta")
+
+
+def test_line_matching_old_and_json_rule_fails(make_repo):
+    app = GOOD_APP.replace('log.warning("lane_full", lane=lane, wanted=n)',
+                           'log.warning("lane_full", lane=lane, wanted=n, detail="lane full")')
+    assert_fails(make_repo({"services/svc/app.py": app}), "LaneFull fired 3 time(s) before but 6 after", "false page")
+
+
+AUDIT_TESTS = ("import os\nimport tempfile\n\n"
+               "os.environ['HL_AUDIT_PATH'] = os.path.join(tempfile.mkdtemp(), 'audit.log')\n" + TESTS)
+
+
+def test_dropped_audit_record_fails(make_repo):
+    base_app = BASE_APP.replace('    return n\n', '    hl_log.audit(SERVICE, "job_done", lane=lane, size=n)\n    return n\n')
+    root = make_repo({}, base={"services/svc/app.py": base_app, "tests/test_svc.py": AUDIT_TESTS})
+    assert_fails(root, "audit:", "tests/test_svc.py::test_ok")
+
+
+def test_background_line_without_request_id_passes(make_repo):
+    base_app = BASE_APP + '''
+
+def poll(lane):
+    hl_log.info(SERVICE, f"lane polled lane={lane}")
+'''
+    head_app = GOOD_APP + '''
+
+def poll(lane):
+    log.info("lane_polled", lane=lane)
+'''
+    tests = TESTS.replace("def test_ok", 'def test_poll():\n    app.poll("LC")\n\n\ndef test_ok')
+    root = make_repo({"services/svc/app.py": head_app, "tests/test_svc.py": tests},
+                     base={"services/svc/app.py": base_app, "tests/test_svc.py": tests})
+    code, out = check(root)
+    assert code == 0, out
+
+
+def test_plain_text_line_from_a_shared_helper_fails(make_repo):
+    helper = '''
+import logging
+import harbor_obs
+
+_plain = logging.getLogger("common.plain")
+_handler = harbor_obs._StdoutHandler()
+_handler.setFormatter(logging.Formatter("%(message)s"))
+_plain.addHandler(_handler)
+_plain.propagate = False
+
+
+def note(text):
+    _plain.log(logging.WARNING, text)
+'''
+    app = GOOD_APP.replace("from harbor_obs import bind_request_id, get_logger",
+                           "from common.plainlog import note\nfrom harbor_obs import bind_request_id, get_logger")
+    app = app.replace("        return None\n", "        note('lane full')\n        return None\n")
+    files = {"common/__init__.py": "", "common/plainlog.py": helper, "services/svc/app.py": app}
+    assert_fails(make_repo(files), "not JSON")
