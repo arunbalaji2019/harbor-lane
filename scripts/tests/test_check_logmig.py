@@ -299,3 +299,10 @@ def test_hidden_values_keep_names_out_of_reports(make_repo):
     code, out = check(root, show=False)
     assert code == 1 and "nothing lost" in out and "audit:" in out, out
     assert "Jane" not in out, out
+
+
+def test_apostrophe_in_value_is_kept(make_repo):
+    tests = TESTS.replace('"LA"', '"o\'neill"')
+    app = GOOD_APP.replace('log.info("job_started", lane=lane, size=n)', 'log.info("job_started", lane=lane[:1], size=n)')
+    root = make_repo({"services/svc/app.py": app, "tests/test_svc.py": tests}, base={"tests/test_svc.py": tests})
+    assert_fails(root, "nothing lost", "o'neill")

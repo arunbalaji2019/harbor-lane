@@ -43,7 +43,7 @@ PHONE_RE = re.compile(r"\+?\d[\d \-()]{8,}\d")
 PII_KEYS = {"email", "email_address", "phone", "phone_number", "mobile", "name",
             "first_name", "last_name", "full_name", "contact_name", "address"}
 VALUE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*")
-KV_RE = re.compile(r"""\b[A-Za-z_]\w*=["']?([^\s,;()"']+)""")
+KV_RE = re.compile(r"""\b[A-Za-z_]\w*=(?:"([^"]*)"|'([^']*)'|([^\s,;()]+))""")
 SHOW_VALUES = False
 HIDDEN = "[log line hidden; rerun locally with --show-values]"
 REDACT_PHONE_RE = re.compile(r"(?<![\w-])\+?\d[\d \-()]{8,}\d(?![\w-])")
@@ -146,8 +146,8 @@ def value_tokens(msg):
         if t and (any(c.isdigit() for c in t) or any(c.isupper() for c in t)):
             if not (EMAIL_RE.search(t) or PHONE_RE.fullmatch(t)):
                 out.add(t)
-    for v in KV_RE.findall(msg):
-        v = v.rstrip(".-")
+    for groups in KV_RE.findall(msg):
+        v = next(g for g in groups if g).rstrip(".-") if any(groups) else ""
         if v and not (EMAIL_RE.search(v) or PHONE_RE.fullmatch(v)):
             out.add(v)
     return out
