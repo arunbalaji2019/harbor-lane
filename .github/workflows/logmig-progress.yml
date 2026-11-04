@@ -12,7 +12,7 @@ permissions:
   contents: read
 jobs:
   table:
-    if: github.event.issue.title == 'logmig progress' && github.event.issue.pull_request == null
+    if: contains(github.event.issue.body, '<!-- logmig-table:start -->') && github.event.issue.pull_request == null
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

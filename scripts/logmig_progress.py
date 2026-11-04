@@ -6,8 +6,9 @@ Each migration session owns ONE comment on the tracking issue:
     | harbor-lane/bookings | PR open | owner/repo#1 | PASS | [session](https://...) |
 
 Sessions never edit the issue body, so concurrent sessions can't overwrite each other.
-The `logmig progress` workflow runs this script on every comment change (one run at a
-time) and regenerates the table between the markers from all row comments.
+The `logmig progress` workflow runs this script on every comment change on any issue whose
+body has the table markers (one run at a time per issue) and regenerates the table between
+the markers from all row comments. It refuses to touch an issue without the markers.
 
     python scripts/logmig_progress.py --repo owner/repo --issue 4
 """
@@ -43,10 +44,10 @@ def build_body(body, comments):
             rows[row.split("|")[1].strip()] = row
     table = "\n".join([START, HEADER, *(rows[k] for k in sorted(rows)), END])
     body = body or ""
-    if START in body and END in body:
-        before, rest = body.split(START, 1)
-        return before + table + rest.split(END, 1)[1]
-    return body.rstrip() + "\n\n" + table + "\n"
+    if START not in body or END not in body:
+        raise ValueError(f"issue body has no {START} ... {END} markers; add them where the table goes")
+    before, rest = body.split(START, 1)
+    return before + table + rest.split(END, 1)[1]
 
 
 def gh(*args):
