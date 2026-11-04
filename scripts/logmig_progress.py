@@ -13,6 +13,7 @@ time) and regenerates the table between the markers from all row comments.
 """
 import argparse
 import json
+import re
 import subprocess
 
 ROW_MARKER = "<!-- logmig-row -->"
@@ -28,7 +29,8 @@ def row_of(comment):
         return None
     for line in body.splitlines()[1:]:
         line = line.strip()
-        if line.startswith("|") and line.endswith("|") and line.count("|") >= 6:
+        # exactly 5 cells and no HTML, so a row can't inject markers or markup into the body
+        if line.startswith("|") and line.endswith("|") and line.count("|") == 6 and not re.search(r"[<>]", line):
             return line
     return None
 

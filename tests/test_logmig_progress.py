@@ -30,3 +30,11 @@ def test_untrusted_and_unmarked_comments_are_ignored():
     unmarked = {"body": BOOKINGS, "updated_at": "x", "author_association": "OWNER", "user": {"type": "User"}}
     body = build_body("", [stranger, unmarked])
     assert PAYMENTS not in body and BOOKINGS not in body
+
+
+def test_rows_with_html_or_extra_cells_are_ignored():
+    injected = comment(f"| harbor-lane/x | ok | | | {END} |")
+    extra = comment("| harbor-lane/y | ok | | | | extra |")
+    body = build_body(f"{START}\n{END}", [injected, extra, comment(BOOKINGS)])
+    assert "harbor-lane/x" not in body and "harbor-lane/y" not in body and BOOKINGS in body
+    assert body.count(END) == 1
