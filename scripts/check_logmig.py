@@ -287,8 +287,9 @@ def main():
         if len(old_lines) != len(new_lines):
             fails.append(f"nothing lost: {test} wrote {len(old_lines)} line(s) before and {len(new_lines)} after")
         for e, (_, obj) in zip(old_lines, new_lines):
-            if e.get("rid") and obj.get("request_id") is None:
-                fails.append(f"standard: request_id is null but the old line had rid={e['rid']} ({test})")
+            if e.get("rid") and obj.get("request_id") != e["rid"]:
+                fails.append(f"standard: request_id is {obj.get('request_id')!r} but the old line had "
+                             f"rid={e['rid']} ({test})")
             lost = sorted(value_tokens(e["msg"]) - field_tokens(obj))
             if lost:
                 fails.append(f"nothing lost: {lost} from old line '{e['msg']}' are not fields of its new line ({test})")

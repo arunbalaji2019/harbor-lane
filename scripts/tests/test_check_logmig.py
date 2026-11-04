@@ -274,3 +274,8 @@ def test_quoted_old_value_passes(make_repo):
     base_app = BASE_APP.replace('f"job started lane={lane} size={n}"', 'f\'job started lane="{lane}" size={n}\'')
     code, out = check(make_repo({}, base={"services/svc/app.py": base_app}))
     assert code == 0, out
+
+
+def test_changed_request_id_fails(make_repo):
+    app = GOOD_APP.replace("bind_request_id(rid)", 'bind_request_id(rid + "-x")')
+    assert_fails(make_repo({"services/svc/app.py": app}), "request_id", "rid=r1")
