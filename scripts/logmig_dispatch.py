@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from logmig_progress import build_body, gh, row_of
+from logmig_progress import END, START, build_body, gh, row_of
 
 API = "https://api.devin.ai/v3"
 BASE_TAG = "logmig"
@@ -190,6 +190,11 @@ class Issue:
                 out[cells[0]] = (c, cells)
         return out
 
+    def require_table(self):
+        body = json.loads(gh(f"repos/{self.repo}/issues/{self.number}"))["body"] or ""
+        if START not in body or END not in body:
+            raise SystemExit(f"tracking issue #{self.number} has no {START} ... {END} markers; add them first")
+
     def upsert_row(self, existing, body):
         if existing:
             try:
@@ -215,11 +220,16 @@ def summary(lines):
             f.write("\n".join(lines) + "\n")
 
 
+def open_pr_titles(repo):
+    prs = json.loads(gh("--paginate", "--slurp", f"repos/{repo}/pulls?state=open&per_page=100"))
+    return [p["title"] for page in prs for p in page]
+
+
 def run(a, repo, devin, issue):
+    issue.require_table()
     selected = select(a.services, discover())
     unmigrated = {s for s in selected if still_uses_hl_log(s)}
-    prs = json.loads(gh("--paginate", "--slurp", f"repos/{repo}/pulls?state=open&per_page=100"))
-    titles = [p["title"] for page in prs for p in page]
+    titles = open_pr_titles(repo)
     rows = issue.rows()
     running = {}
     if devin:
@@ -247,17 +257,22 @@ def run(a, repo, devin, issue):
         cid = issue.upsert_row(existing, row_text(repo, svc, "in progress (starting)"))
         try:
             s = devin.create(session_body(repo, svc, a.issue, cid, a.max_acu))
-            issue.upsert_row({"id": cid}, row_text(repo, svc, "in progress", session_url=s["url"]))
-            print(f"started {svc}: {s['url']}")
         except Exception as e:
             failed += 1
             issue.upsert_row({"id": cid}, row_text(repo, svc, "needs human: dispatch failed", checker=str(e)[:120]))
             print(f"FAILED {svc}: {e}")
+            continue
+        print(f"started {svc}: {s['url']}")
+        try:
+            issue.upsert_row({"id": cid}, row_text(repo, svc, "in progress", session_url=s["url"]))
+        except Exception as e:
+            print(f"WARN {svc}: session started ({s['url']}) but its row could not be updated: {e}")
     issue.rebuild()
     return 1 if failed else 0
 
 
 def stop(a, repo, devin, issue):
+    issue.require_table()
     selected = set(select(a.services, discover()))
     targets = [s for s in devin.sessions([BASE_TAG, repo_tag(repo)])
                if s.get("status") not in ("exit", "error") and tagged_service(s, repo) in selected]
