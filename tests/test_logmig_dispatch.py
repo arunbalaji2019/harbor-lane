@@ -150,3 +150,9 @@ def test_skip_list_entries_need_owner_reason_and_known_service(tmp_path):
         bad.write_text(text)
         with pytest.raises(SystemExit):
             d.load_skip_list(bad, known=["quotes"])
+
+
+def test_dispatch_workflows_install_requirements():
+    for name in ("logmig-run.yml", "logmig-stop.yml"):
+        steps = next(iter(workflow(name)[0]["jobs"].values()))["steps"]
+        assert any(s.get("run") == "pip install -r requirements-dev.txt" for s in steps), name
