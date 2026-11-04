@@ -1,12 +1,14 @@
-import hl_log
+from harbor_obs import bind_request_id, get_logger
 
 SERVICE = "payments"
 
+log = get_logger(SERVICE)
+
 
 def charge(request_id, order_id, amount, card_ok=True):
-    hl_log.set_request(request_id)
+    bind_request_id(request_id)
     if not card_ok:
-        hl_log.error(SERVICE, f"payment declined for order {order_id}: card_refused")
+        log.error("payment_declined", order_id=order_id, reason="card_refused")
         return False
-    hl_log.info(SERVICE, f"order {order_id} paid amount={amount}")
+    log.info("order_paid", order_id=order_id, amount=amount)
     return True
