@@ -131,3 +131,22 @@ def test_rebuilds_go_through_the_progress_workflow(monkeypatch):
     assert "workflow_dispatch" in on and "inputs.issue" in wf["concurrency"]["group"]
     for name in ("logmig-run.yml", "logmig-stop.yml"):
         assert workflow(name)[0]["permissions"]["actions"] == "write"
+
+
+def test_skip_list_wins_over_everything_and_shows_owner():
+    skip = {"legacy_edi": {"owner": "EDI team", "reason": "owned by EDI"}}
+    decisions = d.plan(["legacy_edi", "quotes"], {"legacy_edi", "quotes"}, [], {}, {}, skip_list=skip)
+    assert decisions == [("legacy_edi", "skip", "skip list (owner: EDI team): owned by EDI"), ("quotes", "start", "")]
+
+
+def test_repo_skip_list_has_legacy_edi_with_owner_and_reason():
+    entry = d.load_skip_list()["legacy_edi"]
+    assert "EDI" in entry["owner"] and entry["reason"]
+
+
+def test_skip_list_entries_need_owner_reason_and_known_service(tmp_path):
+    bad = tmp_path / "skip.yml"
+    for text in ("quotes:\n  reason: x\n", "quotes:\n  owner: y\n", "nope:\n  owner: y\n  reason: x\n"):
+        bad.write_text(text)
+        with pytest.raises(SystemExit):
+            d.load_skip_list(bad, known=["quotes"])

@@ -1,0 +1,6 @@
+# Services "Run migration" never starts when services=all. Each entry needs a reason and an
+# owner; the dry-run summary shows both. Naming a service explicitly in the workflow's
+# `services` input still starts it.
+legacy_edi:
+  owner: EDI partner team (@harbor-lane/edi-partners)
+  reason: CODEOWNERS gives services/legacy_edi/ to the EDI team, who migrate it themselves (see issue #9)
