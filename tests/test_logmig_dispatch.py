@@ -51,3 +51,7 @@ def test_select_rejects_unknown_services():
 def test_discover_finds_every_service():
     assert d.discover() == ["bookings", "customers", "invoicing", "legacy_edi",
                             "notifications", "payments", "quotes", "tracking"]
+
+
+def test_select_drops_duplicates():
+    assert d.select("quotes, quotes,tracking", ["quotes", "tracking"]) == ["quotes", "tracking"]

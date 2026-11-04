@@ -75,7 +75,7 @@ def discover(services_dir=ROOT / "services"):
 def select(spec, available):
     if spec.strip().lower() in ("", "all"):
         return list(available)
-    wanted = [s for s in re.split(r"[,\s]+", spec.strip()) if s]
+    wanted = list(dict.fromkeys(s for s in re.split(r"[,\s]+", spec.strip()) if s))
     unknown = [s for s in wanted if s not in available]
     if unknown:
         raise SystemExit(f"unknown service(s): {', '.join(unknown)} (known: {', '.join(available)})")
