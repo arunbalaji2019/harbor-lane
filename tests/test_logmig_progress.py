@@ -15,7 +15,7 @@ def comment(row, updated="2026-11-04T10:00:00Z", assoc="NONE", user_type="Bot"):
 
 def test_rows_from_concurrent_sessions_are_all_kept():
     body = build_body(f"intro\n\n{START}\nstale\n{END}\nfooter", [comment(BOOKINGS), comment(PAYMENTS)])
-    assert BOOKINGS in body and PAYMENTS in body
+    assert BOOKINGS in body and "| harbor-lane/payments | in progress |" in body
     assert body.startswith("intro\n\n") and body.endswith("footer") and "stale" not in body
 
 
@@ -32,12 +32,13 @@ def test_untrusted_and_unmarked_comments_are_ignored():
     assert PAYMENTS not in body and BOOKINGS not in body
 
 
-def test_rows_with_html_or_extra_cells_are_ignored():
+def test_rows_are_sanitized_not_dropped():
     injected = comment(f"| harbor-lane/x | ok | | | {END} |")
-    extra = comment("| harbor-lane/y | ok | | | | extra |")
-    body = build_body(f"{START}\n{END}", [injected, extra, comment(BOOKINGS)])
-    assert "harbor-lane/x" not in body and "harbor-lane/y" not in body and BOOKINGS in body
-    assert body.count(END) == 1
+    failing = comment("| harbor-lane/y | PR open | #9 | FAIL: alerts: X fired 1 | 0 <later> | [session](s) |")
+    body = build_body(f"{START}\n{END}", [injected, failing, comment(BOOKINGS)])
+    assert body.count(END) == 1 and BOOKINGS in body
+    assert "| harbor-lane/x | ok |  |  | !-- logmig-table:end -- |" in body
+    assert "| harbor-lane/y | PR open | #9 | FAIL: alerts: X fired 1 / 0 later | [session](s) |" in body
 
 
 def test_issue_without_markers_is_refused():

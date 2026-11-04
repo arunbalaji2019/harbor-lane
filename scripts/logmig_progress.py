@@ -30,9 +30,15 @@ def row_of(comment):
         return None
     for line in body.splitlines()[1:]:
         line = line.strip()
-        # exactly 5 cells and no HTML, so a row can't inject markers or markup into the body
-        if line.startswith("|") and line.endswith("|") and line.count("|") == 6 and not re.search(r"[<>]", line):
-            return line
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        cells = [c.strip() for c in re.sub(r"[<>]", "", line)[1:-1].split("|")]
+        if len(cells) < 5:
+            continue
+        # Stray pipes (e.g. in a checker failure) belong to the checker result column;
+        # dropping < and > keeps a row from injecting markers or HTML into the body.
+        cells = cells[:3] + [" / ".join(cells[3:-1]), cells[-1]]
+        return "| " + " | ".join(cells) + " |"
     return None
 
 
