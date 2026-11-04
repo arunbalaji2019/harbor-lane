@@ -279,3 +279,14 @@ def test_quoted_old_value_passes(make_repo):
 def test_changed_request_id_fails(make_repo):
     app = GOOD_APP.replace("bind_request_id(rid)", 'bind_request_id(rid + "-x")')
     assert_fails(make_repo({"services/svc/app.py": app}), "request_id", "rid=r1")
+
+
+def test_new_audit_action_in_a_new_test_fails(make_repo):
+    audit_done = '    hl_log.audit(SERVICE, "job_done", lane=lane, size=n)\n    return n\n'
+    base_app = BASE_APP.replace('    return n\n', audit_done)
+    head_app = ("import hl_log\n" + GOOD_APP.replace('    return n\n', audit_done)
+                + '\n\ndef cancel(lane):\n    hl_log.audit(SERVICE, "job_cancelled", lane=lane)\n')
+    tests = AUDIT_TESTS + '\n\ndef test_cancel():\n    app.cancel("LA")\n'
+    root = make_repo({"services/svc/app.py": head_app, "tests/test_svc.py": tests},
+                     base={"services/svc/app.py": base_app, "tests/test_svc.py": AUDIT_TESTS})
+    assert_fails(root, "audit:", "job_cancelled")

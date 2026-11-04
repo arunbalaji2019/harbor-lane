@@ -316,11 +316,20 @@ def main():
                 out[e["test"]].append([e["service"], e["action"], e["fields"]])
         return out
     base_tests = {e["test"] for e in base_entries if e["kind"] == "test"}
+
+    def fmt_audit(recs):
+        return recs
     base_audit, head_audit = audits(base_entries), audits(head_entries)
     for test in sorted(set(base_audit) | (set(head_audit) & base_tests)):
         if base_audit.get(test, []) != head_audit.get(test, []):
-            fails.append(f"audit: {test} wrote {base_audit.get(test, [])} to the audit trail before and "
-                         f"{head_audit.get(test, [])} after; docs/AUDIT.md says it must not change")
+            fails.append(f"audit: {test} wrote {fmt_audit(base_audit.get(test, []))} to the audit trail before "
+                         f"and {fmt_audit(head_audit.get(test, []))} after; docs/AUDIT.md says it must not change")
+    base_shapes = {(s, act, tuple(sorted(f))) for recs in base_audit.values() for s, act, f in recs}
+    for test in sorted(set(head_audit) - base_tests):
+        for s, act, f in head_audit[test]:
+            if (s, act, tuple(sorted(f))) not in base_shapes:
+                fails.append(f"audit: new test {test} writes a '{act}' record with fields {sorted(f)} that the "
+                             "base revision never wrote; docs/AUDIT.md says the action set must not change")
 
     # Rule changes: only additions; an XJson rule must keep X's threshold and page
     base_by, head_by = {r["name"]: r for r in base_rules}, {r["name"]: r for r in head_rules}
