@@ -4,7 +4,7 @@
     python scripts/logmig_dispatch.py stop --services all --issue 4 [--dry-run]
 
 run:  one session per selected service, following .agents/skills/logmig/SKILL.md. Skips a service
-      that is already migrated (no hl_log import left), has an open `[logmig] <service>:` PR, has a
+      on the skip list (.github/logmig-skip.yml) unless it is named explicitly, one that is already migrated (no hl_log import left), has an open `[logmig] <service>:` PR, has a
       running tagged session, or (unless --include-needs-human) is marked `needs human` in the
       tracking issue. Each session is tagged, capped at --max-acu ACUs, and linked in its row.
 stop: terminates the running tagged sessions and marks their rows `stopped`.
@@ -22,12 +22,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import yaml
 from logmig_progress import END, START, gh, row_of
 
 API = "https://api.devin.ai/v3"
 BASE_TAG = "logmig"
 ACTIVE = {"new", "claimed", "running", "resuming", "suspended"}
 ROOT = Path(__file__).resolve().parents[1]
+SKIP_LIST = ROOT / ".github" / "logmig-skip.yml"
 SERVICE_RE = re.compile(r"^[a-z0-9_]+$")
 HL_LOG_IMPORT_RE = re.compile(r"^\s*(import\s+hl_log\b|from\s+hl_log\b)", re.M)
 RESULT_SCHEMA = {
@@ -83,17 +85,36 @@ def select(spec, available):
     return wanted
 
 
+def load_skip_list(path=SKIP_LIST, known=None):
+    """{service: {"owner": ..., "reason": ...}}; every entry needs a known service, an owner and a reason."""
+    if not Path(path).exists():
+        return {}
+    data = yaml.safe_load(Path(path).read_text()) or {}
+    if not isinstance(data, dict):
+        raise SystemExit(f"{path}: expected a mapping of service -> {{owner, reason}}")
+    known = discover() if known is None else known
+    for svc, entry in data.items():
+        if svc not in known:
+            raise SystemExit(f"{path}: unknown service '{svc}'")
+        if not isinstance(entry, dict) or not str(entry.get("owner") or "").strip() or not str(entry.get("reason") or "").strip():
+            raise SystemExit(f"{path}: '{svc}' needs both an owner and a reason")
+    return data
+
+
 def still_uses_hl_log(svc, services_dir=ROOT / "services"):
     return any(HL_LOG_IMPORT_RE.search(p.read_text()) for p in (services_dir / svc).rglob("*.py"))
 
 
-def plan(selected, unmigrated, open_pr_titles, running, row_status, include_needs_human=False):
+def plan(selected, unmigrated, open_pr_titles, running, row_status, include_needs_human=False, skip_list=None):
     """Return [(service, 'start' | 'skip', reason)] for each selected service."""
     out = []
     for svc in selected:
         pr = next((t for t in open_pr_titles if t.startswith(f"[logmig] {svc}:")), None)
         status = row_status.get(svc, "")
-        if svc not in unmigrated:
+        skip = (skip_list or {}).get(svc)
+        if skip:
+            out.append((svc, "skip", f"skip list (owner: {skip['owner']}): {skip['reason']}"))
+        elif svc not in unmigrated:
             out.append((svc, "skip", "already migrated (no hl_log import)"))
         elif pr:
             out.append((svc, "skip", f"open PR: {pr}"))
@@ -230,6 +251,8 @@ def open_pr_titles(repo):
 def run(a, repo, devin, issue):
     issue.require_table()
     selected = select(a.services, discover())
+    explicit = set() if a.services.strip().lower() in ("", "all") else set(selected)
+    skip_list = {s: e for s, e in load_skip_list().items() if s not in explicit}
     unmigrated = {s for s in selected if still_uses_hl_log(s)}
     titles = open_pr_titles(repo)
     rows = issue.rows()
@@ -242,7 +265,7 @@ def run(a, repo, devin, issue):
     else:
         print("WARN no DEVIN_API_KEY/DEVIN_ORG_ID: running sessions not checked (dry run only)")
     status = {svc: rows[row_key(repo, svc)][1][1] for svc in selected if row_key(repo, svc) in rows}
-    decisions = plan(selected, unmigrated, titles, running, status, a.include_needs_human)
+    decisions = plan(selected, unmigrated, titles, running, status, a.include_needs_human, skip_list)
 
     lines = [f"## Run migration{' (dry run)' if a.dry_run else ''}: {repo}, max {a.max_acu} ACUs/session", "",
              "| service | action | reason |", "|---|---|---|"]
