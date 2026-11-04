@@ -1,0 +1,57 @@
+name: Run migration
+# Starts one Devin session per service (scripts/logmig_dispatch.py). Setup: repo secret
+# DEVIN_API_KEY (service-user key) and repo variable DEVIN_ORG_ID.
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Services to migrate: 'all' or a comma-separated list"
+        default: all
+        required: true
+      max_acu:
+        description: "Spend limit per session (ACUs)"
+        default: "10"
+        required: true
+      dry_run:
+        description: "Dry run: only list what would start"
+        type: boolean
+        default: true
+      include_needs_human:
+        description: "Also retry services marked 'needs human'"
+        type: boolean
+        default: false
+      issue:
+        description: "Tracking issue number"
+        default: "4"
+        required: true
+concurrency:
+  group: logmig-dispatch
+  cancel-in-progress: false
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Start sessions
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+          GH_TOKEN: ${{ github.token }}
+          SERVICES: ${{ inputs.services }}
+          MAX_ACU: ${{ inputs.max_acu }}
+          ISSUE: ${{ inputs.issue }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          NEEDS_HUMAN: ${{ inputs.include_needs_human }}
+        run: |
+          args=(run --services "$SERVICES" --max-acu "$MAX_ACU" --issue "$ISSUE")
+          [[ "$DRY_RUN" == "true" ]] && args+=(--dry-run)
+          [[ "$NEEDS_HUMAN" == "true" ]] && args+=(--include-needs-human)
+          python scripts/logmig_dispatch.py "${args[@]}"

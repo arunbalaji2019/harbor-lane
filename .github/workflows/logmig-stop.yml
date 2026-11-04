@@ -1,0 +1,45 @@
+name: Stop migration
+# Terminates the running sessions tagged by "Run migration" and marks them stopped in the
+# tracking issue. Same setup as logmig-run.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Services to stop: 'all' or a comma-separated list"
+        default: all
+        required: true
+      dry_run:
+        description: "Dry run: only list what would stop"
+        type: boolean
+        default: false
+      issue:
+        description: "Tracking issue number"
+        default: "4"
+        required: true
+concurrency:
+  group: logmig-dispatch
+  cancel-in-progress: false
+permissions:
+  actions: write
+  contents: read
+  issues: write
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Stop sessions
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+          DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+          GH_TOKEN: ${{ github.token }}
+          SERVICES: ${{ inputs.services }}
+          ISSUE: ${{ inputs.issue }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(stop --services "$SERVICES" --issue "$ISSUE")
+          [[ "$DRY_RUN" == "true" ]] && args+=(--dry-run)
+          python scripts/logmig_dispatch.py "${args[@]}"
