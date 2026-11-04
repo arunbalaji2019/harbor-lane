@@ -268,3 +268,9 @@ def note(text):
     app = app.replace("        return None\n", "        note('lane full')\n        return None\n")
     files = {"common/__init__.py": "", "common/plainlog.py": helper, "services/svc/app.py": app}
     assert_fails(make_repo(files), "not JSON")
+
+
+def test_quoted_old_value_passes(make_repo):
+    base_app = BASE_APP.replace('f"job started lane={lane} size={n}"', 'f\'job started lane="{lane}" size={n}\'')
+    code, out = check(make_repo({}, base={"services/svc/app.py": base_app}))
+    assert code == 0, out

@@ -43,7 +43,7 @@ PHONE_RE = re.compile(r"\+?\d[\d \-()]{8,}\d")
 PII_KEYS = {"email", "email_address", "phone", "phone_number", "mobile", "name",
             "first_name", "last_name", "full_name", "contact_name", "address"}
 VALUE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*")
-KV_RE = re.compile(r"\b[A-Za-z_]\w*=([^\s,;()]+)")
+KV_RE = re.compile(r"""\b[A-Za-z_]\w*=["']?([^\s,;()"']+)""")
 REDACT_PHONE_RE = re.compile(r"(?<![\w-])\+?\d[\d \-()]{8,}\d(?![\w-])")
 LOG_METHODS = {"debug", "info", "warning", "warn", "error", "critical", "exception"}
 JSON_RULE_SUFFIX = "Json"
