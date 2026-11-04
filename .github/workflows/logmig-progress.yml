@@ -1,0 +1,24 @@
+name: logmig progress
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+# One run at a time; every run rebuilds the whole table from all row comments,
+# so a skipped intermediate run loses nothing.
+concurrency:
+  group: logmig-progress-${{ github.event.issue.number }}
+  cancel-in-progress: false
+permissions:
+  issues: write
+  contents: read
+jobs:
+  table:
+    if: contains(github.event.issue.body, '<!-- logmig-table:start -->') && github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/logmig_progress.py --repo "${{ github.repository }}" --issue "${{ github.event.issue.number }}"
