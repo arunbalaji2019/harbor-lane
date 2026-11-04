@@ -1,9 +1,10 @@
 """pytest plugin used by check_logmig.py: records every hl_log and harbor_obs line per test.
 
 Loaded with `-p logmig_capture`; writes JSON lines to the file named by $LOGMIG_CAPTURE.
-Each log entry carries `caller`, the repo-relative file that made the logging call, so the
-checker can attribute lines to a service even when they aren't valid JSON. Test outcomes are
-recorded as `{"kind": "test"}` entries.
+Each log entry carries `stack`, the repo-relative files on the call stack (innermost first;
+`caller` is the first), so the checker can attribute lines to a service even when they aren't
+valid JSON or come from a shared helper. `hl_log.audit()` calls are recorded as
+`{"kind": "audit"}` and test outcomes as `{"kind": "test"}` entries.
 """
 import json
 import os
@@ -25,8 +26,8 @@ def _record(entry):
     _out.flush()
 
 
-def _caller():
-    frame = sys._getframe(2)
+def _where():
+    stack, frame = [], sys._getframe(1)
     while frame is not None:
         path = Path(frame.f_code.co_filename).resolve()
         if path != Path(__file__).resolve():
@@ -35,9 +36,9 @@ def _caller():
             except ValueError:
                 rel = None
             if rel is not None and rel.parts and rel.parts[0] not in _SKIP_DIRS:
-                return rel.as_posix()
+                stack.append(rel.as_posix())
         frame = frame.f_back
-    return None
+    return {"caller": stack[0] if stack else None, "stack": stack}
 
 
 def _patch_hl_log():
@@ -50,11 +51,19 @@ def _patch_hl_log():
     def _emit(level, service, msg):
         rid = getattr(hl_log._ctx, "request_id", None)
         _record({"kind": "hl_log", "level": level, "service": service, "rid": rid, "msg": msg,
-                 "caller": _caller(),
+                 **_where(),
                  "line": f"{hl_log._ts()} [{level}] {service} rid={rid or '-'} {msg}"})
         original(level, service, msg)
 
+    original_audit = hl_log.audit
+
+    def audit(service, action, **fields):
+        _record({"kind": "audit", "service": service, "action": action,
+                 "fields": {k: str(v) for k, v in sorted(fields.items())}, **_where()})
+        return original_audit(service, action, **fields)
+
     hl_log._emit = _emit
+    hl_log.audit = audit
 
 
 def _patch_harbor_obs():
@@ -65,7 +74,7 @@ def _patch_harbor_obs():
     original = harbor_obs._StdoutHandler.emit
 
     def emit(self, record):
-        _record({"kind": "harbor_obs", "logger": record.name, "caller": _caller(),
+        _record({"kind": "harbor_obs", "logger": record.name, **_where(),
                  "line": self.format(record)})
         original(self, record)
 

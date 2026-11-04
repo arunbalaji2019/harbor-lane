@@ -9,9 +9,12 @@ records every log line each test emits. It then checks:
     docs/AUDIT.md changed
   * standard: every line is JSON with ts (UTC), level, service, a fixed snake_case
     event and request_id; every log call in the service is exercised by a test
-  * personal data: no emails, phone numbers or name-like fields
+  * personal data: no emails, phone numbers or name-like fields, at any nesting depth;
+    emails and phone numbers are redacted from the checker's own output
+  * audit: every hl_log.audit() record a base test wrote is still written, unchanged
   * nothing lost: each test writes as many lines as before, and each old message's values
-    appear as fields of its own new line
+    (including every key=value value) appear as fields of its own new line, which keeps
+    the old line's request id
   * alerts: for every base test (which must still run), each alert fires as many times as
     before (rule `XJson` counts as rule `X`); rules are only added, never edited or removed,
     and an `XJson` rule keeps X's threshold and page
@@ -40,6 +43,10 @@ PHONE_RE = re.compile(r"\+?\d[\d \-()]{8,}\d")
 PII_KEYS = {"email", "email_address", "phone", "phone_number", "mobile", "name",
             "first_name", "last_name", "full_name", "contact_name", "address"}
 VALUE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*")
+KV_RE = re.compile(r"""\b[A-Za-z_]\w*=(?:"([^"]*)"|'([^']*)'|([^\s,;()]+))""")
+SHOW_VALUES = False
+HIDDEN = "[log line hidden; rerun locally with --show-values]"
+REDACT_PHONE_RE = re.compile(r"(?<![\w-])\+?\d[\d \-()]{8,}\d(?![\w-])")
 LOG_METHODS = {"debug", "info", "warning", "warn", "error", "critical", "exception"}
 JSON_RULE_SUFFIX = "Json"
 
@@ -70,12 +77,37 @@ def fired(line, rules):
     return {r["name"] for r in rules if str(r["match"]).lower() in line.lower()}
 
 
-def norm(names):
-    return {n[: -len(JSON_RULE_SUFFIX)] if n.endswith(JSON_RULE_SUFFIX) else n for n in names}
+def norm1(name):
+    return name[: -len(JSON_RULE_SUFFIX)] if name.endswith(JSON_RULE_SUFFIX) else name
+
+
+def redact(text):
+    return REDACT_PHONE_RE.sub("<phone>", EMAIL_RE.sub("<email>", text))
+
+
+def shown(text):
+    return text if SHOW_VALUES else HIDDEN
+
+
+def pii_problems(value, line, path=""):
+    out = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            p = f"{path}.{k}" if path else str(k)
+            if str(k).lower() in PII_KEYS:
+                out.append(f"personal data: field '{p}' is not allowed (log an id instead): {shown(line)}")
+            else:
+                out += pii_problems(v, line, p)
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            out += pii_problems(v, line, f"{path}[{i}]")
+    elif isinstance(value, str) and (EMAIL_RE.search(value) or PHONE_RE.search(value)):
+        out.append(f"personal data: field '{path}' looks like an email/phone: {shown(line)}")
+    return out
 
 
 def service_of(entry):
-    if entry["kind"] == "hl_log":
+    if entry["kind"] in ("hl_log", "audit"):
         return entry["service"]
     try:
         return json.loads(entry["line"]).get("service")
@@ -114,6 +146,10 @@ def value_tokens(msg):
         if t and (any(c.isdigit() for c in t) or any(c.isupper() for c in t)):
             if not (EMAIL_RE.search(t) or PHONE_RE.fullmatch(t)):
                 out.add(t)
+    for groups in KV_RE.findall(msg):
+        v = next(g for g in groups if g).rstrip(".-") if any(groups) else ""
+        if v and not (EMAIL_RE.search(v) or PHONE_RE.fullmatch(v)):
+            out.add(v)
     return out
 
 
@@ -136,9 +172,14 @@ def main():
     ap.add_argument("--rules", default="alerts/rules.yaml")
     ap.add_argument("--protected", nargs="*", default=["hl_log/", "docs/AUDIT.md"],
                     help="paths a migration PR must not change")
+    ap.add_argument("--show-values", action="store_true",
+                    help="include raw old messages, failing lines and audit values in the output (local runs only; "
+                         "CI output may hold personal data from the old logs)")
     ap.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     ap.add_argument("tests", nargs="*", help="pytest args (default: whole suite)")
     a = ap.parse_args()
+    global SHOW_VALUES
+    SHOW_VALUES = a.show_values
 
     head = Path(sh(["git", "rev-parse", "--show-toplevel"], cwd=".").stdout.strip() or ".")
     svc, svc_dir = a.service, head / a.services_dir / a.service
@@ -186,21 +227,20 @@ def main():
     head_rules = load_rules(head, a.rules)
 
     def belongs(e):
-        caller = e.get("caller") or ""
-        if caller.startswith(f"{prefix}{svc}/"):
+        stack = e.get("stack") or ([e["caller"]] if e.get("caller") else [])
+        if any(f.startswith(f"{prefix}{svc}/") for f in stack):
             return True
-        return not caller.startswith(prefix) and service_of(e) == svc
+        return not any(f.startswith(prefix) for f in stack) and service_of(e) == svc
 
     head_tests = {e["test"] for e in head_entries if e["kind"] == "test"}
     old = [e for e in base_entries if e["kind"] == "hl_log" and belongs(e)]
-    new = [e for e in head_entries if e["kind"] != "test" and belongs(e)]
+    new = [e for e in head_entries if e["kind"] in ("hl_log", "harbor_obs") and belongs(e)]
     if not old:
         warns.append("baseline: no hl_log lines from this service in the base run (nothing to compare)")
     if not new:
         fails.append("standard: the tests produced no log lines for this service")
 
     # Standard + personal data, per line
-    binds_request = any(e.get("rid") for e in old)
     seen_events, by_test_new, samples = set(), defaultdict(list), {}
     for e in new:
         line = e["line"]
@@ -233,22 +273,15 @@ def main():
         seen_events.add(ev)
         samples.setdefault(ev, line)
         if obj.get("request_id") is None:
-            (fails if binds_request else warns).append(
-                f"standard: request_id is null{' (the old code bound one)' if binds_request else ''}: {line}")
-        for k, v in obj.items():
-            if k == "ts":
-                continue
-            if k.lower() in PII_KEYS:
-                fails.append(f"personal data: field '{k}' is not allowed (log an id instead): {line}")
-            elif isinstance(v, str) and (EMAIL_RE.search(v) or PHONE_RE.search(v)):
-                fails.append(f"personal data: field '{k}' looks like an email/phone: {line}")
+            warns.append(f"standard: request_id is null: {line}")
+        fails += pii_problems({k: v for k, v in obj.items() if k != "ts"}, line)
     for ev in sorted(events - seen_events):
         fails.append(f"coverage: event '{ev}' is never emitted by the tests (add a test for that path)")
 
     def alert_counts(lines, rules):
         counts = Counter()
         for line in lines:
-            counts.update(norm(fired(line, rules)))
+            counts.update(norm1(n) for n in fired(line, rules))
         return counts
 
     # Nothing lost (line by line) + alerts (counts), per baseline test
@@ -264,10 +297,15 @@ def main():
         old_lines, new_lines = by_test_old[test], by_test_new.get(test, [])
         if len(old_lines) != len(new_lines):
             fails.append(f"nothing lost: {test} wrote {len(old_lines)} line(s) before and {len(new_lines)} after")
-        for e, (_, obj) in zip(old_lines, new_lines):
+        for i, (e, (_, obj)) in enumerate(zip(old_lines, new_lines), 1):
+            if e.get("rid") and obj.get("request_id") != e["rid"]:
+                fails.append(f"standard: request_id is {obj.get('request_id')!r} but the old line had "
+                             f"rid={e['rid']} ({test})")
             lost = sorted(value_tokens(e["msg"]) - field_tokens(obj))
             if lost:
-                fails.append(f"nothing lost: {lost} from old line '{e['msg']}' are not fields of its new line ({test})")
+                detail = f"{lost} from old line '{e['msg']}'" if SHOW_VALUES else f"{len(lost)} value(s) from old line {i}"
+                fails.append(f"nothing lost: {detail} are not fields of its new line '{obj.get('event')}' ({test})"
+                             + ("" if SHOW_VALUES else "; rerun locally with --show-values to see them"))
         before = alert_counts([e["line"] for e in old_lines], base_rules)
         after = alert_counts([l for l, _ in new_lines], head_rules)
         alert_rows.append({"test": test, "before": dict(before), "after": dict(after)})
@@ -282,6 +320,29 @@ def main():
             for name in sorted(alert_counts([l for l, _ in lines], head_rules)):
                 if name not in old_fired:
                     fails.append(f"alerts: {name} fires in new test {test} but no old line fired it - false page")
+
+    # Audit trail (docs/AUDIT.md): every record a base test wrote must still be written
+    def audits(entries):
+        out = defaultdict(list)
+        for e in entries:
+            if e["kind"] == "audit" and belongs(e):
+                out[e["test"]].append([e["service"], e["action"], e["fields"]])
+        return out
+    base_tests = {e["test"] for e in base_entries if e["kind"] == "test"}
+
+    def fmt_audit(recs):
+        return recs if SHOW_VALUES else [[s, act, sorted(f)] for s, act, f in recs]
+    base_audit, head_audit = audits(base_entries), audits(head_entries)
+    for test in sorted(set(base_audit) | (set(head_audit) & base_tests)):
+        if base_audit.get(test, []) != head_audit.get(test, []):
+            fails.append(f"audit: {test} wrote {fmt_audit(base_audit.get(test, []))} to the audit trail before "
+                         f"and {fmt_audit(head_audit.get(test, []))} after; docs/AUDIT.md says it must not change")
+    base_shapes = {(s, act, tuple(sorted(f))) for recs in base_audit.values() for s, act, f in recs}
+    for test in sorted(set(head_audit) - base_tests):
+        for s, act, f in head_audit[test]:
+            if (s, act, tuple(sorted(f))) not in base_shapes:
+                fails.append(f"audit: new test {test} writes a '{act}' record with fields {sorted(f)} that the "
+                             "base revision never wrote; docs/AUDIT.md says the action set must not change")
 
     # Rule changes: only additions; an XJson rule must keep X's threshold and page
     base_by, head_by = {r["name"]: r for r in base_rules}, {r["name"]: r for r in head_rules}
@@ -303,6 +364,8 @@ def main():
                              f"{orig['name']} '{orig.get(key)}'; the replacement must page the same way")
     touched = sorted(n for n in set(base_by) | set(head_by) if base_by.get(n) != head_by.get(n))
 
+    fails, warns = [redact(f) for f in fails], [redact(w) for w in warns]
+    samples = {} if any(f.startswith("personal data") for f in fails) else {ev: redact(l) for ev, l in samples.items()}
     report = {"service": svc, "passed": not fails, "failures": fails, "warnings": warns,
               "alerts_touched": touched, "alert_replay": alert_rows, "samples": samples,
               "changed_files": changed}
