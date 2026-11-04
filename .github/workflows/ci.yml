@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,3 +14,38 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
+      - run: pytest -q scripts/tests
+
+  logmig-check:
+    # Runs docs/LOGGING_STANDARD.md + alert replay checks on every "[logmig] <service>: ..." PR.
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.title, '[logmig]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      - name: Check migrated service
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [[ ! "$PR_TITLE" =~ ^\[logmig\]\ ([a-z0-9_]+): ]]; then
+            echo "::error::PR title must look like '[logmig] <service>: ...'"
+            exit 1
+          fi
+          service="${BASH_REMATCH[1]}"
+          if [[ "$service" == "setup" ]]; then
+            echo "[logmig] setup PR: no service to check (checker tests run in the test job)"
+            exit 0
+          fi
+          python scripts/check_logmig.py "$service" --base "origin/$BASE_REF" --json logmig-report.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logmig-report
+          path: logmig-report.json
+          if-no-files-found: ignore
