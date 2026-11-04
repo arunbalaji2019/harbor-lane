@@ -32,12 +32,12 @@ def row_of(comment):
         line = line.strip()
         if not (line.startswith("|") and line.endswith("|")):
             continue
-        cells = [c.strip() for c in re.sub(r"[<>]", "", line)[1:-1].split("|")]
-        if len(cells) < 5:
-            continue
-        # Stray pipes (e.g. in a checker failure) belong to the checker result column;
-        # dropping < and > keeps a row from injecting markers or HTML into the body.
-        cells = cells[:3] + [" / ".join(cells[3:-1]), cells[-1]]
+        # Dropping < and > keeps a row from injecting markers or HTML into the body.
+        # Cells escape pipes as \|; a row that still doesn't split into 5 cells is shown
+        # as malformed rather than dropped or shifted into the wrong columns.
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", re.sub(r"[<>]", "", line)[1:-1])]
+        if len(cells) != 5:
+            cells = [cells[0], "needs human: malformed progress row", "", "", ""]
         return "| " + " | ".join(cells) + " |"
     return None
 

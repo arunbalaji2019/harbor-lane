@@ -34,11 +34,13 @@ def test_untrusted_and_unmarked_comments_are_ignored():
 
 def test_rows_are_sanitized_not_dropped():
     injected = comment(f"| harbor-lane/x | ok | | | {END} |")
-    failing = comment("| harbor-lane/y | PR open | #9 | FAIL: alerts: X fired 1 | 0 <later> | [session](s) |")
-    body = build_body(f"{START}\n{END}", [injected, failing, comment(BOOKINGS)])
+    escaped = comment(r"| harbor-lane/y | PR open | #9 | FAIL: X fired 1 \| 0 <later> | [session](s) |")
+    unescaped = comment("| harbor-lane/z | needs human: owner | finance | | | [session](s) |")
+    body = build_body(f"{START}\n{END}", [injected, escaped, unescaped, comment(BOOKINGS)])
     assert body.count(END) == 1 and BOOKINGS in body
     assert "| harbor-lane/x | ok |  |  | !-- logmig-table:end -- |" in body
-    assert "| harbor-lane/y | PR open | #9 | FAIL: alerts: X fired 1 / 0 later | [session](s) |" in body
+    assert r"| harbor-lane/y | PR open | #9 | FAIL: X fired 1 \| 0 later | [session](s) |" in body
+    assert "| harbor-lane/z | needs human: malformed progress row |  |  |  |" in body
 
 
 def test_issue_without_markers_is_refused():

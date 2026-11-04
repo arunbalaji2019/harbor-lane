@@ -120,6 +120,7 @@ Instead, post ONE comment for your service, and edit that same comment for later
 - Columns: service (`<repo>/<service>`), status, PR, checker result, session.
 - `status` is `in progress`, `PR open`, `needs human: <reason>` or `nothing to do`.
 - `checker result` is `PASS`, `FAIL: <first failure>` or blank.
+- Escape any `|` inside a cell as `\|`, or the row shows as `malformed`.
 - Post the comment with `in progress` when you start. Edit it to your final status at the end.
 - Each session owns only its own comment, so parallel sessions never overwrite each other.
 
