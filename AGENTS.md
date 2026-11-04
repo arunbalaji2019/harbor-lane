@@ -18,6 +18,8 @@ with the reason and stop.
 - Before opening a `[logmig]` PR, both must pass:
   `pytest -q` and `python scripts/check_logmig.py <service> --base origin/main`.
   CI runs the same checker on every `[logmig]` PR. Don't weaken the checker or its tests to pass.
+- A repo's service PRs need its `[logmig] setup: checker and CI` PR merged first. If the checker
+  is missing, report `needs human` instead of adding it in a service PR.
 
 ## Setup
 Python 3.11. `pip install -r requirements-dev.txt`, then `pytest -q`.

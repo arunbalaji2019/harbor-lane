@@ -11,10 +11,12 @@ Output: one PR, or a `needs human` result. Runs unattended: never ask for approv
 
 ## 0. Preconditions (stop with `needs human` if any fail)
 - Python 3.11. `pip install -r requirements-dev.txt` and `pytest -q` pass on `origin/main`.
-- The repo has the checker: `scripts/check_logmig.py`, `scripts/logmig_capture.py`, PyYAML in
-  `requirements-dev.txt`, and a `logmig-check` CI job. If not, the reason is
-  `repo not bootstrapped for logmig`. Don't add them in a service PR, because parallel sessions
-  would conflict.
+- The repo's setup PR, `[logmig] setup: checker and CI`, has merged into the default branch. Every
+  repo needs it once, before any service PR. It adds `scripts/check_logmig.py`,
+  `scripts/logmig_capture.py`, `scripts/tests/`, PyYAML in `requirements-dev.txt`, and the
+  `logmig-check` CI job; harbor-lane's is #3, so copy those files from there. If they're missing,
+  the reason is `repo not bootstrapped for logmig: needs the [logmig] setup PR`. Never add them
+  in a service PR, because parallel sessions would conflict.
 - There is no open PR whose title starts with `[logmig] <service>:`. If there is one, report
   `status: already_open` with its URL and stop.
 
@@ -102,9 +104,19 @@ output. After 3 failed fix attempts on the same failure, report `needs_human` wi
 - Wait for CI (`test` and `logmig-check`). If CI fails, fix it and push. Never merge.
 
 ## 7. Report
-Update the tracking issue given in the prompt. Post or edit ONE comment per service, starting with
-`<!-- logmig:<owner/repo>:<service> -->`, containing a one-line status, the PR or issue link, and
-the reason when the status is `needs_human`. Never edit the issue body; the dispatcher owns it.
+Update the tracking issue: the issue given in the prompt, otherwise the open issue titled
+`logmig progress` in arunbalaji2019/harbor-lane (#4). Its body has ONE table for all repos:
+
+| service | status | PR | checker result | session |
+|---|---|---|---|---|
+| harbor-lane/bookings | PR open | owner/repo#1 | PASS | [session](<this session's URL>) |
+
+- `service` is `<repo>/<service>`; `status` is `in progress`, `PR open`, `needs human: <reason>`
+  or `nothing to do`; `checker result` is `PASS`, `FAIL: <first failure>` or blank.
+- Set `in progress` when you start, and your final status at the end.
+- Edit only your own row (append it if missing). Other sessions edit the same body, so re-read
+  the issue immediately before each edit, then read it again afterwards; if your row didn't
+  stick, retry once more.
 
 Finish with structured output matching:
 ```json
