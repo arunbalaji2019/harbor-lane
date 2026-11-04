@@ -115,8 +115,8 @@ def make_repo(tmp_path):
     return _make
 
 
-def check(root):
-    res = subprocess.run([sys.executable, str(CHECKER), "svc", "--base", "main"],
+def check(root, show=True):
+    res = subprocess.run([sys.executable, str(CHECKER), "svc", "--base", "main", *(["--show-values"] if show else [])],
                          cwd=root, capture_output=True, text=True)
     return res.returncode, res.stdout + res.stderr
 
@@ -202,7 +202,7 @@ def test_nested_personal_data_fails(make_repo):
 def test_reports_redact_personal_data(make_repo):
     app = GOOD_APP.replace('log.info("job_done", lane=lane, size=n)',
                            'log.info("job_done", lane=lane, size=n, note="call +44 20 7946 0958 or ops@harbor.example")')
-    code, out = check(make_repo({"services/svc/app.py": app}))
+    code, out = check(make_repo({"services/svc/app.py": app}), show=False)
     assert code == 1 and "personal data" in out, out
     assert "ops@harbor.example" not in out and "7946 0958" not in out, out
 
@@ -290,3 +290,12 @@ def test_new_audit_action_in_a_new_test_fails(make_repo):
     root = make_repo({"services/svc/app.py": head_app, "tests/test_svc.py": tests},
                      base={"services/svc/app.py": base_app, "tests/test_svc.py": AUDIT_TESTS})
     assert_fails(root, "audit:", "job_cancelled")
+
+
+def test_hidden_values_keep_names_out_of_reports(make_repo):
+    base_app = BASE_APP.replace('    return n\n', '    hl_log.audit(SERVICE, "job_done", lane=lane, contact="Jane Doe")\n    return n\n')
+    base_app = base_app.replace('f"job done lane={lane} size={n}"', 'f"job done lane={lane} size={n} by Jane Doe"')
+    root = make_repo({}, base={"services/svc/app.py": base_app, "tests/test_svc.py": AUDIT_TESTS})
+    code, out = check(root, show=False)
+    assert code == 1 and "nothing lost" in out and "audit:" in out, out
+    assert "Jane" not in out, out

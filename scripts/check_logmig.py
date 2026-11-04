@@ -44,6 +44,8 @@ PII_KEYS = {"email", "email_address", "phone", "phone_number", "mobile", "name",
             "first_name", "last_name", "full_name", "contact_name", "address"}
 VALUE_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*")
 KV_RE = re.compile(r"""\b[A-Za-z_]\w*=["']?([^\s,;()"']+)""")
+SHOW_VALUES = False
+HIDDEN = "[log line hidden; rerun locally with --show-values]"
 REDACT_PHONE_RE = re.compile(r"(?<![\w-])\+?\d[\d \-()]{8,}\d(?![\w-])")
 LOG_METHODS = {"debug", "info", "warning", "warn", "error", "critical", "exception"}
 JSON_RULE_SUFFIX = "Json"
@@ -83,20 +85,24 @@ def redact(text):
     return REDACT_PHONE_RE.sub("<phone>", EMAIL_RE.sub("<email>", text))
 
 
+def shown(text):
+    return text if SHOW_VALUES else HIDDEN
+
+
 def pii_problems(value, line, path=""):
     out = []
     if isinstance(value, dict):
         for k, v in value.items():
             p = f"{path}.{k}" if path else str(k)
             if str(k).lower() in PII_KEYS:
-                out.append(f"personal data: field '{p}' is not allowed (log an id instead): {line}")
+                out.append(f"personal data: field '{p}' is not allowed (log an id instead): {shown(line)}")
             else:
                 out += pii_problems(v, line, p)
     elif isinstance(value, (list, tuple)):
         for i, v in enumerate(value):
             out += pii_problems(v, line, f"{path}[{i}]")
     elif isinstance(value, str) and (EMAIL_RE.search(value) or PHONE_RE.search(value)):
-        out.append(f"personal data: field '{path}' looks like an email/phone: {line}")
+        out.append(f"personal data: field '{path}' looks like an email/phone: {shown(line)}")
     return out
 
 
@@ -166,9 +172,14 @@ def main():
     ap.add_argument("--rules", default="alerts/rules.yaml")
     ap.add_argument("--protected", nargs="*", default=["hl_log/", "docs/AUDIT.md"],
                     help="paths a migration PR must not change")
+    ap.add_argument("--show-values", action="store_true",
+                    help="include raw old messages, failing lines and audit values in the output (local runs only; "
+                         "CI output may hold personal data from the old logs)")
     ap.add_argument("--json", dest="json_out", help="write the report as JSON to this path")
     ap.add_argument("tests", nargs="*", help="pytest args (default: whole suite)")
     a = ap.parse_args()
+    global SHOW_VALUES
+    SHOW_VALUES = a.show_values
 
     head = Path(sh(["git", "rev-parse", "--show-toplevel"], cwd=".").stdout.strip() or ".")
     svc, svc_dir = a.service, head / a.services_dir / a.service
@@ -286,13 +297,15 @@ def main():
         old_lines, new_lines = by_test_old[test], by_test_new.get(test, [])
         if len(old_lines) != len(new_lines):
             fails.append(f"nothing lost: {test} wrote {len(old_lines)} line(s) before and {len(new_lines)} after")
-        for e, (_, obj) in zip(old_lines, new_lines):
+        for i, (e, (_, obj)) in enumerate(zip(old_lines, new_lines), 1):
             if e.get("rid") and obj.get("request_id") != e["rid"]:
                 fails.append(f"standard: request_id is {obj.get('request_id')!r} but the old line had "
                              f"rid={e['rid']} ({test})")
             lost = sorted(value_tokens(e["msg"]) - field_tokens(obj))
             if lost:
-                fails.append(f"nothing lost: {lost} from old line '{e['msg']}' are not fields of its new line ({test})")
+                detail = f"{lost} from old line '{e['msg']}'" if SHOW_VALUES else f"{len(lost)} value(s) from old line {i}"
+                fails.append(f"nothing lost: {detail} are not fields of its new line '{obj.get('event')}' ({test})"
+                             + ("" if SHOW_VALUES else "; rerun locally with --show-values to see them"))
         before = alert_counts([e["line"] for e in old_lines], base_rules)
         after = alert_counts([l for l, _ in new_lines], head_rules)
         alert_rows.append({"test": test, "before": dict(before), "after": dict(after)})
@@ -318,7 +331,7 @@ def main():
     base_tests = {e["test"] for e in base_entries if e["kind"] == "test"}
 
     def fmt_audit(recs):
-        return recs
+        return recs if SHOW_VALUES else [[s, act, sorted(f)] for s, act, f in recs]
     base_audit, head_audit = audits(base_entries), audits(head_entries)
     for test in sorted(set(base_audit) | (set(head_audit) & base_tests)):
         if base_audit.get(test, []) != head_audit.get(test, []):
@@ -352,7 +365,7 @@ def main():
     touched = sorted(n for n in set(base_by) | set(head_by) if base_by.get(n) != head_by.get(n))
 
     fails, warns = [redact(f) for f in fails], [redact(w) for w in warns]
-    samples = {ev: redact(line) for ev, line in samples.items()}
+    samples = {} if any(f.startswith("personal data") for f in fails) else {ev: redact(l) for ev, l in samples.items()}
     report = {"service": svc, "passed": not fails, "failures": fails, "warnings": warns,
               "alerts_touched": touched, "alert_replay": alert_rows, "samples": samples,
               "changed_files": changed}
