@@ -17,7 +17,7 @@ on:
         type: boolean
         default: true
       include_needs_human:
-        description: "Also retry services marked 'needs human'"
+        description: "With services=all, also retry services marked 'needs human' (services named explicitly always retry)"
         type: boolean
         default: false
       issue:

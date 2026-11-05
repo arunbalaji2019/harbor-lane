@@ -307,3 +307,103 @@ def test_apostrophe_in_value_is_kept(make_repo):
                            'log.info("job_started", lane=lane.split("\'")[0], size=n)')
     root = make_repo({"services/svc/app.py": app, "tests/test_svc.py": tests}, base={"tests/test_svc.py": tests})
     assert_fails(root, "nothing lost: [\"o'neill\"]")
+
+
+CONTACT_BASE = BASE_APP + '''
+
+def contact(cid, email, phone):
+    hl_log.info(SERVICE, f"customer {cid} contact updated email={email} phone={phone}")
+'''
+CONTACT_TESTS = TESTS + '''
+
+def test_contact():
+    app.contact("C1", "ana@example.com", "+44 7700 900123")
+'''
+
+
+@pytest.mark.parametrize("fields", ['customer_id=cid', 'customer_id=cid, contact=__import__("harbor_obs").redact(email)'])
+def test_dropped_or_redacted_personal_data_counts_as_kept(make_repo, fields):
+    head = GOOD_APP + f'''
+
+def contact(cid, email, phone):
+    log.info("customer_contact_updated", {fields})
+'''
+    root = make_repo({"services/svc/app.py": head, "tests/test_svc.py": CONTACT_TESTS},
+                     base={"services/svc/app.py": CONTACT_BASE, "tests/test_svc.py": CONTACT_TESTS})
+    code, out = check(root)
+    assert code == 0, out
+
+
+def test_dropping_a_non_personal_value_next_to_personal_data_still_fails(make_repo):
+    head = GOOD_APP + '''
+
+def contact(cid, email, phone):
+    log.info("customer_contact_updated")
+'''
+    root = make_repo({"services/svc/app.py": head, "tests/test_svc.py": CONTACT_TESTS},
+                     base={"services/svc/app.py": CONTACT_BASE, "tests/test_svc.py": CONTACT_TESTS})
+    assert_fails(root, "nothing lost", "['C1']")
+
+
+def test_request_ids_set_outside_the_service_are_not_required(make_repo):
+    base_app = BASE_APP + '''
+
+def poll(lane):
+    hl_log.info(SERVICE, f"lane polled lane={lane}")
+'''
+    head_app = GOOD_APP + '''
+
+def poll(lane):
+    log.info("lane_polled", lane=lane)
+'''
+    leak = '''
+import hl_log
+from harbor_obs import bind_request_id
+
+
+def test_leaks_request_context():
+    hl_log.set_request("r2")
+    bind_request_id("r9")
+'''
+    tests = TESTS + '''
+
+def test_poll():
+    app.poll("LC")
+
+
+def test_poll_inside_a_request_the_test_set():
+    import hl_log
+    hl_log.set_request("r5")
+    app.poll("LD")
+'''
+    files = {"services/svc/app.py": head_app, "tests/test_svc.py": tests, "tests/test_aaa.py": leak}
+    root = make_repo(files, base={**files, "services/svc/app.py": base_app})
+    code, out = check(root)
+    assert code == 0, out
+
+
+def _extra_fn(base_body, head_body, call):
+    base = BASE_APP + f"\n\ndef extra(a, b):\n    {base_body}\n"
+    head = GOOD_APP + f"\n\ndef extra(a, b):\n    {head_body}\n"
+    tests = TESTS + f"\n\ndef test_extra():\n    app.extra{call}\n"
+    return {"services/svc/app.py": head, "tests/test_svc.py": tests}, {"services/svc/app.py": base, "tests/test_svc.py": tests}
+
+
+def test_unquoted_full_name_is_never_required(make_repo):
+    head, base = _extra_fn('hl_log.info(SERVICE, f"customer {a} renamed name={b}")',
+                           'log.info("customer_renamed", customer_id=a)', '("C1", "Jane Doe")')
+    code, out = check(make_repo(head, base=base))
+    assert code == 0, out
+
+
+def test_dropping_a_long_numeric_id_still_fails(make_repo):
+    head, base = _extra_fn('hl_log.info(SERVICE, f"account linked account_id={a} for {b}")',
+                           'log.info("account_linked", booking_id=b)', '("1234567890", "B7")')
+    assert_fails(make_repo(head, base=base), "nothing lost", "new line 'account_linked'")
+
+
+def test_ids_inside_a_quoted_address_are_not_required(make_repo):
+    head, base = _extra_fn('hl_log.info(SERVICE, f"customer {a} moved address=\'{b}\'")',
+                           'log.info("customer_moved", customer_id=a)', '("C1", "12 Dock Rd unit_id=A5")')
+    code, out = check(make_repo(head, base=base))
+    assert code == 0, out

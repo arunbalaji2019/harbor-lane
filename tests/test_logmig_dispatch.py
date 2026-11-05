@@ -99,6 +99,7 @@ def args(**kw):
 @pytest.fixture
 def no_github(monkeypatch):
     monkeypatch.setattr(d, "open_pr_titles", lambda repo: [])
+    monkeypatch.setattr(d, "still_uses_hl_log", lambda svc: True)
     monkeypatch.setattr(d, "request_rebuild", lambda repo, issue: None, raising=False)
 
 
@@ -222,3 +223,21 @@ def test_run_does_not_restart_a_stopped_service_with_an_open_pr(no_github, monke
 def test_dispatch_workflows_can_read_open_prs():
     for name in ("logmig-run.yml", "logmig-stop.yml"):
         assert workflow(name)[0]["permissions"].get("pull-requests") == "read", name
+
+
+def test_needs_human_restarts_only_when_named_explicitly():
+    status = {"quotes": "needs human: checker bug", "invoicing": "needs human: Finance sign-off"}
+    named = d.plan(["quotes"], {"quotes"}, [], {}, status, explicit={"quotes"})
+    assert named == [("quotes", "start", "")]
+    every = d.plan(["invoicing", "quotes"], {"invoicing", "quotes"}, [], {}, status)
+    assert [act for _, act, _ in every] == ["skip", "skip"]
+
+
+def test_run_passes_explicit_services_to_plan(no_github):
+    rows = {"harbor-lane/quotes": ({"id": 7}, ["harbor-lane/quotes", "needs human: checker bug", "", "", ""])}
+    devin = FakeDevin()
+    assert d.run(args(services="quotes"), REPO, devin, FakeIssue(rows=rows)) == 0
+    assert len(devin.created) == 1
+    devin = FakeDevin()
+    assert d.run(args(services="all"), REPO, devin, FakeIssue(rows=rows)) == 0
+    assert "logmig-harbor-lane-quotes" not in [t for b in devin.created for t in b["tags"]]
