@@ -380,3 +380,23 @@ def test_poll_inside_a_request_the_test_set():
     root = make_repo(files, base={**files, "services/svc/app.py": base_app})
     code, out = check(root)
     assert code == 0, out
+
+
+def _extra_fn(base_body, head_body, call):
+    base = BASE_APP + f"\n\ndef extra(a, b):\n    {base_body}\n"
+    head = GOOD_APP + f"\n\ndef extra(a, b):\n    {head_body}\n"
+    tests = TESTS + f"\n\ndef test_extra():\n    app.extra{call}\n"
+    return {"services/svc/app.py": head, "tests/test_svc.py": tests}, {"services/svc/app.py": base, "tests/test_svc.py": tests}
+
+
+def test_unquoted_full_name_is_never_required(make_repo):
+    head, base = _extra_fn('hl_log.info(SERVICE, f"customer {a} renamed name={b}")',
+                           'log.info("customer_renamed", customer_id=a)', '("C1", "Jane Doe")')
+    code, out = check(make_repo(head, base=base))
+    assert code == 0, out
+
+
+def test_dropping_a_long_numeric_id_still_fails(make_repo):
+    head, base = _extra_fn('hl_log.info(SERVICE, f"account linked account_id={a} for {b}")',
+                           'log.info("account_linked", booking_id=b)', '("1234567890", "B7")')
+    assert_fails(make_repo(head, base=base), "nothing lost", "new line 'account_linked'")

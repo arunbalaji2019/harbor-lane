@@ -49,8 +49,17 @@ KV_RE = re.compile(r"""\b[A-Za-z_]\w*=(?:"([^"]*)"|'([^']*)'|([^\s,;()]+))""")
 SHOW_VALUES = False
 HIDDEN = "[log line hidden; rerun locally with --show-values]"
 REDACT_PHONE_RE = re.compile(r"(?<![\w-])\+?\d[\d \-()]{8,}\d(?![\w-])")
-PII_KV_RE = re.compile(r"""\b(?:%s)=(?:"[^"]*"|'[^']*'|[^\s,;()]+)""" % "|".join(sorted(PII_KEYS, key=len, reverse=True)),
-                       re.I)
+MULTIWORD_PII_KEYS = {"name", "first_name", "last_name", "full_name", "contact_name", "address"}
+# Values of personal-data keys. Name/address values may be unquoted words ("name=Jane Doe"): take
+# following words up to the next key= or a word with a digit (ids like B7 stay visible).
+PII_KV_RE = re.compile(
+    r"""\b(?:(?:%s)=(?:"[^"]*"|'[^']*'|[^\s,;()]+(?:\s+(?![\w-]+=)[^\s\d,;()=]+)*)"""
+    r"""|(?:%s)=(?:"[^"]*"|'[^']*'|[^\s,;()]+))"""
+    % ("|".join(sorted(MULTIWORD_PII_KEYS, key=len, reverse=True)),
+       "|".join(sorted(PII_KEYS - MULTIWORD_PII_KEYS, key=len, reverse=True))),
+    re.I)
+# id=/…_id= values are identifiers, kept even when they look like a phone number.
+ID_KV_RE = re.compile(r"""\b(?:\w+_)?id=(?:"([^"]*)"|'([^']*)'|([^\s,;()]+))""", re.I)
 LOG_METHODS = {"debug", "info", "warning", "warn", "error", "critical", "exception"}
 JSON_RULE_SUFFIX = "Json"
 
@@ -150,8 +159,9 @@ def strip_pii(msg):
 def value_tokens(msg):
     """Values in an old message: tokens containing a digit or an uppercase letter.
     Personal data is skipped: a migration must never be required to log it."""
+    ids = {next(g for g in groups if g).rstrip(".-") for groups in ID_KV_RE.findall(msg) if any(groups)}
+    out = {v for v in ids if v and not EMAIL_RE.search(v)}
     msg = strip_pii(msg)
-    out = set()
     for t in VALUE_TOKEN_RE.findall(msg):
         t = t.rstrip(".-")
         if t and (any(c.isdigit() for c in t) or any(c.isupper() for c in t)):
