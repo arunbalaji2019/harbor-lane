@@ -58,15 +58,15 @@ def test_select_drops_duplicates():
 
 
 class FakeIssue:
-    def __init__(self, body="<!-- logmig-table:start -->\n<!-- logmig-table:end -->", fail_on_call=None):
-        self.body, self.fail_on_call, self.writes = body, fail_on_call, []
+    def __init__(self, body="<!-- logmig-table:start -->\n<!-- logmig-table:end -->", fail_on_call=None, rows=None):
+        self.body, self.fail_on_call, self.writes, self._rows = body, fail_on_call, [], rows or {}
 
     def require_table(self):
         if "logmig-table:start" not in self.body:
             raise SystemExit("no markers")
 
     def rows(self):
-        return {}
+        return self._rows
 
     def upsert_row(self, existing, body):
         self.writes.append(body)
@@ -156,3 +156,69 @@ def test_dispatch_workflows_install_requirements():
     for name in ("logmig-run.yml", "logmig-stop.yml"):
         steps = next(iter(workflow(name)[0]["jobs"].values()))["steps"]
         assert any(s.get("run") == "pip install -r requirements-dev.txt" for s in steps), name
+
+
+def row(svc, status, pr=""):
+    return {f"harbor-lane/{svc}": ({"id": 7}, [f"harbor-lane/{svc}", status, pr, "PASS" if pr else "", "[session](u)"])}
+
+
+class RunningDevin(FakeDevin):
+    def __init__(self, *services):
+        super().__init__()
+        self.services, self.terminated = services, []
+
+    def sessions(self, tags):
+        return [{"session_id": f"devin-{s}", "status": "running", "url": f"https://app.devin.ai/sessions/{s}",
+                 "tags": ["logmig", "logmig-harbor-lane", f"logmig-harbor-lane-{s}"]} for s in self.services]
+
+    def terminate(self, session_id):
+        self.terminated.append(session_id)
+
+
+@pytest.mark.parametrize("rows,titles", [
+    (row("payments", "PR open", "arunbalaji2019/harbor-lane#11"), ["[logmig] payments: move to harbor_obs"]),
+    (row("payments", "in progress"), ["[logmig] payments: move to harbor_obs"]),
+    (row("payments", "needs human: Finance sign-off"), []),
+    (row("payments", "nothing to do"), []),
+    (row("payments", "merged", "#12"), []),
+])
+def test_stop_keeps_rows_that_have_a_pr_or_a_final_status(no_github, monkeypatch, rows, titles):
+    monkeypatch.setattr(d, "open_pr_titles", lambda repo: titles)
+    devin, issue = RunningDevin("payments"), FakeIssue(rows=rows)
+    assert d.stop(args(services="payments"), REPO, devin, issue) == 0
+    assert devin.terminated == ["devin-payments"]
+    assert issue.writes == []
+
+
+@pytest.mark.parametrize("rows", [{}, row("payments", "in progress"), row("payments", "in progress (starting)")])
+def test_stop_marks_unfinished_sessions_stopped(no_github, rows):
+    devin, issue = RunningDevin("payments"), FakeIssue(rows=rows)
+    assert d.stop(args(services="payments"), REPO, devin, issue) == 0
+    assert devin.terminated == ["devin-payments"]
+    assert len(issue.writes) == 1 and "| harbor-lane/payments | stopped |  |" in issue.writes[0]
+
+
+def test_stop_dry_run_terminates_nothing(no_github):
+    devin, issue = RunningDevin("payments"), FakeIssue(rows=row("payments", "in progress"))
+    assert d.stop(args(services="payments", dry_run=True), REPO, devin, issue) == 0
+    assert devin.terminated == [] and issue.writes == []
+
+
+def test_run_restarts_a_stopped_service_without_a_pr(no_github, monkeypatch):
+    monkeypatch.setattr(d, "still_uses_hl_log", lambda svc: True)
+    devin, issue = FakeDevin(), FakeIssue(rows=row("quotes", "stopped"))
+    assert d.run(args(services="quotes"), REPO, devin, issue) == 0
+    assert len(devin.created) == 1 and "| harbor-lane/quotes | in progress |" in issue.writes[-1]
+
+
+def test_run_does_not_restart_a_stopped_service_with_an_open_pr(no_github, monkeypatch):
+    monkeypatch.setattr(d, "still_uses_hl_log", lambda svc: True)
+    monkeypatch.setattr(d, "open_pr_titles", lambda repo: ["[logmig] quotes: move to harbor_obs"])
+    devin = FakeDevin()
+    assert d.run(args(services="quotes"), REPO, devin, FakeIssue(rows=row("quotes", "stopped", "#13"))) == 0
+    assert devin.created == []
+
+
+def test_dispatch_workflows_can_read_open_prs():
+    for name in ("logmig-run.yml", "logmig-stop.yml"):
+        assert workflow(name)[0]["permissions"].get("pull-requests") == "read", name

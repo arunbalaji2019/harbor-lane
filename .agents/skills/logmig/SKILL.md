@@ -118,7 +118,8 @@ Instead, post ONE comment for your service, and edit that same comment for later
 ```
 
 - Columns: service (`<repo>/<service>`), status, PR, checker result, session.
-- `status` is `in progress`, `PR open`, `needs human: <reason>` or `nothing to do`.
+- `status` is `in progress`, `PR open`, `needs human: <reason>` or `nothing to do`. (`stopped` is set only by
+  Stop migration, for a session that ended before opening a PR; Run migration restarts it.)
 - `checker result` is `PASS`, `FAIL: <first failure>` or blank.
 - Escape any `|` inside a cell as `\|`, or the row shows as `malformed`.
 - The dispatcher posts your row (`in progress`, with your session link) and gives you its comment

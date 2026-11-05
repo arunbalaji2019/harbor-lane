@@ -7,7 +7,9 @@ run:  one session per selected service, following .agents/skills/logmig/SKILL.md
       on the skip list (.github/logmig-skip.yml) unless it is named explicitly, one that is already migrated (no hl_log import left), has an open `[logmig] <service>:` PR, has a
       running tagged session, or (unless --include-needs-human) is marked `needs human` in the
       tracking issue. Each session is tagged, capped at --max-acu ACUs, and linked in its row.
-stop: terminates the running tagged sessions and marks their rows `stopped`.
+stop: terminates the running tagged sessions. A row is marked `stopped` only if that session hadn't
+      finished (no PR and no final status yet); rows with a PR or a final status keep it. Run
+      restarts a `stopped` service that has no open PR.
 
 Env: DEVIN_API_KEY (service-user key, cog_...), DEVIN_ORG_ID (org-...), GH_TOKEN, GITHUB_REPOSITORY.
 """
@@ -296,26 +298,38 @@ def run(a, repo, devin, issue):
     return 1 if failed else 0
 
 
+def unfinished(status, pr_cell, open_pr):
+    """True if Stop may mark the row `stopped`: no PR yet and no final status."""
+    return not pr_cell and not open_pr and (not status or status.startswith(("in progress", "stopped")))
+
+
 def stop(a, repo, devin, issue):
     issue.require_table()
     selected = set(select(a.services, discover()))
     targets = [s for s in devin.sessions([BASE_TAG, repo_tag(repo)])
                if s.get("status") not in ("exit", "error") and tagged_service(s, repo) in selected]
+    rows, titles = issue.rows(), open_pr_titles(repo)
+    plans = []
+    for s in targets:
+        svc = tagged_service(s, repo)
+        existing, cells = rows.get(row_key(repo, svc), (None, None))
+        status, pr, checker = (cells[1], cells[2], cells[3]) if cells else ("", "", "")
+        open_pr = next((t for t in titles if t.startswith(f"[logmig] {svc}:")), None)
+        mark = unfinished(status, pr, open_pr)
+        keep = f"keep '{status}'" + (f" ({pr or open_pr})" if pr or open_pr else "")
+        plans.append((s, svc, existing, checker, mark, "mark stopped" if mark else keep))
     lines = [f"## Stop migration{' (dry run)' if a.dry_run else ''}: {repo}", "",
-             "| service | session | status |", "|---|---|---|"]
-    lines += [f"| {tagged_service(s, repo)} | {s.get('url')} | {s.get('status')} |" for s in targets]
+             "| service | session | status | row |", "|---|---|---|---|"]
+    lines += [f"| {svc} | {s.get('url')} | {s.get('status')} | {cell(row)} |" for s, svc, _, _, _, row in plans]
     summary(lines if targets else lines[:1] + ["", "No running logmig sessions."])
     if a.dry_run:
         return 0
-    rows = issue.rows()
-    for s in targets:
-        svc = tagged_service(s, repo)
+    for s, svc, existing, checker, mark, row in plans:
         devin.terminate(s["session_id"])
-        existing, cells = rows.get(row_key(repo, svc), (None, None))
-        pr, checker = (cells[2], cells[3]) if cells else ("", "")
-        issue.upsert_row(existing, row_text(repo, svc, "stopped", pr.replace("\\|", "|"),
-                                            checker.replace("\\|", "|"), s.get("url", "")))
-        print(f"stopped {svc}: {s.get('url')}")
+        if mark:
+            issue.upsert_row(existing, row_text(repo, svc, "stopped", checker=checker.replace("\\|", "|"),
+                                                session_url=s.get("url", "")))
+        print(f"stopped {svc}: {s.get('url')} (row: {row})")
     request_rebuild(repo, a.issue)
     return 0
 
