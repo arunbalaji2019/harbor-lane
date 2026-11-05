@@ -4,7 +4,9 @@ Loaded with `-p logmig_capture`; writes JSON lines to the file named by $LOGMIG_
 Each log entry carries `stack`, the repo-relative files on the call stack (innermost first;
 `caller` is the first), so the checker can attribute lines to a service even when they aren't
 valid JSON or come from a shared helper. `hl_log.audit()` calls are recorded as
-`{"kind": "audit"}` and test outcomes as `{"kind": "test"}` entries.
+`{"kind": "audit"}` and test outcomes as `{"kind": "test"}` entries. hl_log entries also carry
+`rid_set_by`, the stack of the hl_log.set_request() call that set their request id. Request
+context (hl_log's thread-local, harbor_obs's contextvar) is reset before every test.
 """
 import json
 import os
@@ -12,6 +14,7 @@ import sys
 from pathlib import Path
 
 _current = {"test": None}
+_rid_setter = {"stack": None}
 _out = None
 _root = None
 _SKIP_DIRS = ("hl_log", "harbor_obs")
@@ -51,7 +54,7 @@ def _patch_hl_log():
     def _emit(level, service, msg):
         rid = getattr(hl_log._ctx, "request_id", None)
         _record({"kind": "hl_log", "level": level, "service": service, "rid": rid, "msg": msg,
-                 **_where(),
+                 "rid_set_by": _rid_setter["stack"] or [], **_where(),
                  "line": f"{hl_log._ts()} [{level}] {service} rid={rid or '-'} {msg}"})
         original(level, service, msg)
 
@@ -62,8 +65,23 @@ def _patch_hl_log():
                  "fields": {k: str(v) for k, v in sorted(fields.items())}, **_where()})
         return original_audit(service, action, **fields)
 
+    original_set_request = hl_log.set_request
+
+    def set_request(request_id):
+        _rid_setter["stack"] = _where()["stack"]
+        return original_set_request(request_id)
+
     hl_log._emit = _emit
     hl_log.audit = audit
+    hl_log.set_request = set_request
+
+
+def _reset_request_context():
+    _rid_setter["stack"] = None
+    if "hl_log" in sys.modules:
+        sys.modules["hl_log"]._ctx.__dict__.pop("request_id", None)
+    if "harbor_obs" in sys.modules:
+        sys.modules["harbor_obs"]._request_id.set(None)
 
 
 def _patch_harbor_obs():
@@ -89,6 +107,7 @@ def pytest_configure(config):
 
 
 def pytest_runtest_setup(item):
+    _reset_request_context()
     _current["test"] = item.nodeid
 
 

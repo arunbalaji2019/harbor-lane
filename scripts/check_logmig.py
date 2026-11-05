@@ -13,8 +13,10 @@ records every log line each test emits. It then checks:
     emails and phone numbers are redacted from the checker's own output
   * audit: every hl_log.audit() record a base test wrote is still written, unchanged
   * nothing lost: each test writes as many lines as before, and each old message's values
-    (including every key=value value) appear as fields of its own new line, which keeps
-    the old line's request id
+    (including every key=value value) appear as fields of its own new line. Personal data
+    (emails, phone numbers, values of name/email/phone-like keys) is never required: dropped
+    or redacted counts as kept. If the service itself set the old line's request id, the new
+    line keeps it (request context is reset between tests, so ids can't leak across tests)
   * alerts: for every base test (which must still run), each alert fires as many times as
     before (rule `XJson` counts as rule `X`); rules are only added, never edited or removed,
     and an `XJson` rule keeps X's threshold and page
@@ -47,6 +49,8 @@ KV_RE = re.compile(r"""\b[A-Za-z_]\w*=(?:"([^"]*)"|'([^']*)'|([^\s,;()]+))""")
 SHOW_VALUES = False
 HIDDEN = "[log line hidden; rerun locally with --show-values]"
 REDACT_PHONE_RE = re.compile(r"(?<![\w-])\+?\d[\d \-()]{8,}\d(?![\w-])")
+PII_KV_RE = re.compile(r"""\b(?:%s)=(?:"[^"]*"|'[^']*'|[^\s,;()]+)""" % "|".join(sorted(PII_KEYS, key=len, reverse=True)),
+                       re.I)
 LOG_METHODS = {"debug", "info", "warning", "warn", "error", "critical", "exception"}
 JSON_RULE_SUFFIX = "Json"
 
@@ -138,8 +142,15 @@ def static_scan(service_dir):
     return imports, events, problems
 
 
+def strip_pii(msg):
+    """Remove emails, phone numbers and values of personal-data keys before reading values."""
+    return PII_KV_RE.sub(" ", REDACT_PHONE_RE.sub(" ", EMAIL_RE.sub(" ", msg)))
+
+
 def value_tokens(msg):
-    """Values in an old message: tokens containing a digit or an uppercase letter."""
+    """Values in an old message: tokens containing a digit or an uppercase letter.
+    Personal data is skipped: a migration must never be required to log it."""
+    msg = strip_pii(msg)
     out = set()
     for t in VALUE_TOKEN_RE.findall(msg):
         t = t.rstrip(".-")
@@ -298,7 +309,8 @@ def main():
         if len(old_lines) != len(new_lines):
             fails.append(f"nothing lost: {test} wrote {len(old_lines)} line(s) before and {len(new_lines)} after")
         for i, (e, (_, obj)) in enumerate(zip(old_lines, new_lines), 1):
-            if e.get("rid") and obj.get("request_id") != e["rid"]:
+            rid_from_service = any(f.startswith(f"{prefix}{svc}/") for f in e.get("rid_set_by") or [])
+            if e.get("rid") and rid_from_service and obj.get("request_id") != e["rid"]:
                 fails.append(f"standard: request_id is {obj.get('request_id')!r} but the old line had "
                              f"rid={e['rid']} ({test})")
             lost = sorted(value_tokens(e["msg"]) - field_tokens(obj))

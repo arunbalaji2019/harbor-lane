@@ -5,8 +5,8 @@
 
 run:  one session per selected service, following .agents/skills/logmig/SKILL.md. Skips a service
       on the skip list (.github/logmig-skip.yml) unless it is named explicitly, one that is already migrated (no hl_log import left), has an open `[logmig] <service>:` PR, has a
-      running tagged session, or (unless --include-needs-human) is marked `needs human` in the
-      tracking issue. Each session is tagged, capped at --max-acu ACUs, and linked in its row.
+      running tagged session, or is marked `needs human` in the tracking issue (unless the service
+      is named explicitly, or --include-needs-human). Each session is tagged, capped at --max-acu ACUs, and linked in its row.
 stop: terminates the running tagged sessions. A row is marked `stopped` only if that session hadn't
       finished (no PR and no final status yet); rows with a PR or a final status keep it. Run
       restarts a `stopped` service that has no open PR.
@@ -107,7 +107,8 @@ def still_uses_hl_log(svc, services_dir=ROOT / "services"):
     return any(HL_LOG_IMPORT_RE.search(p.read_text()) for p in (services_dir / svc).rglob("*.py"))
 
 
-def plan(selected, unmigrated, open_pr_titles, running, row_status, include_needs_human=False, skip_list=None):
+def plan(selected, unmigrated, open_pr_titles, running, row_status, include_needs_human=False, skip_list=None,
+         explicit=frozenset()):
     """Return [(service, 'start' | 'skip', reason)] for each selected service."""
     out = []
     for svc in selected:
@@ -122,7 +123,7 @@ def plan(selected, unmigrated, open_pr_titles, running, row_status, include_need
             out.append((svc, "skip", f"open PR: {pr}"))
         elif svc in running:
             out.append((svc, "skip", f"session already running: {running[svc]}"))
-        elif status.startswith("needs human") and not include_needs_human:
+        elif status.startswith("needs human") and not include_needs_human and svc not in explicit:
             out.append((svc, "skip", f"tracking issue says '{status}'"))
         else:
             out.append((svc, "start", ""))
@@ -267,7 +268,7 @@ def run(a, repo, devin, issue):
     else:
         print("WARN no DEVIN_API_KEY/DEVIN_ORG_ID: running sessions not checked (dry run only)")
     status = {svc: rows[row_key(repo, svc)][1][1] for svc in selected if row_key(repo, svc) in rows}
-    decisions = plan(selected, unmigrated, titles, running, status, a.include_needs_human, skip_list)
+    decisions = plan(selected, unmigrated, titles, running, status, a.include_needs_human, skip_list, explicit)
 
     lines = [f"## Run migration{' (dry run)' if a.dry_run else ''}: {repo}, max {a.max_acu} ACUs/session", "",
              "| service | action | reason |", "|---|---|---|"]
