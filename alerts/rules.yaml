@@ -14,6 +14,14 @@
   threshold: 1 in 15m
   page: ops-oncall
 
+# TrackingFeedStale for tracking's harbor_obs JSON lines (logmig). Same threshold and
+# page as TrackingFeedStale. Both rules stay while old and new tracking builds run;
+# delete TrackingFeedStale in a follow-up PR once every instance runs harbor_obs.
+- name: TrackingFeedStaleJson
+  match: '"service": "tracking", "event": "feed_stale"'
+  threshold: 1 in 15m
+  page: ops-oncall
+
 - name: BookingLaneFull
   match: "no capacity on lane"
   threshold: 10 in 10m

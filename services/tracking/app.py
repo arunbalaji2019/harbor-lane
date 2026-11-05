@@ -1,12 +1,14 @@
-import hl_log
+from harbor_obs import get_logger
 
 SERVICE = "tracking"
 STALE_AFTER_MIN = 15
 
+log = get_logger(SERVICE)
+
 
 def check_feed(minutes_since_update):
     if minutes_since_update > STALE_AFTER_MIN:
-        hl_log.warn(SERVICE, f"tracking feed stale for {minutes_since_update} minutes")
+        log.warning("feed_stale", minutes_since_update=minutes_since_update)
         return "stale"
-    hl_log.info(SERVICE, "tracking feed ok")
+    log.info("feed_ok")
     return "ok"
