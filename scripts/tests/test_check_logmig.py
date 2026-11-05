@@ -400,3 +400,10 @@ def test_dropping_a_long_numeric_id_still_fails(make_repo):
     head, base = _extra_fn('hl_log.info(SERVICE, f"account linked account_id={a} for {b}")',
                            'log.info("account_linked", booking_id=b)', '("1234567890", "B7")')
     assert_fails(make_repo(head, base=base), "nothing lost", "new line 'account_linked'")
+
+
+def test_ids_inside_a_quoted_address_are_not_required(make_repo):
+    head, base = _extra_fn('hl_log.info(SERVICE, f"customer {a} moved address=\'{b}\'")',
+                           'log.info("customer_moved", customer_id=a)', '("C1", "12 Dock Rd unit_id=A5")')
+    code, out = check(make_repo(head, base=base))
+    assert code == 0, out

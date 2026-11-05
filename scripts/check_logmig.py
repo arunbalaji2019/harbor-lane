@@ -159,7 +159,7 @@ def strip_pii(msg):
 def value_tokens(msg):
     """Values in an old message: tokens containing a digit or an uppercase letter.
     Personal data is skipped: a migration must never be required to log it."""
-    ids = {next(g for g in groups if g).rstrip(".-") for groups in ID_KV_RE.findall(msg) if any(groups)}
+    ids = {next(g for g in groups if g).rstrip(".-") for groups in ID_KV_RE.findall(PII_KV_RE.sub(" ", msg)) if any(groups)}
     out = {v for v in ids if v and not EMAIL_RE.search(v)}
     msg = strip_pii(msg)
     for t in VALUE_TOKEN_RE.findall(msg):
