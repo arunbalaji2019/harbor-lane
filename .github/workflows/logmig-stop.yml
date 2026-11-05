@@ -23,6 +23,7 @@ permissions:
   actions: write
   contents: read
   issues: write
+  pull-requests: read
 jobs:
   stop:
     runs-on: ubuntu-latest

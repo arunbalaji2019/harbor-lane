@@ -217,3 +217,8 @@ def test_run_does_not_restart_a_stopped_service_with_an_open_pr(no_github, monke
     devin = FakeDevin()
     assert d.run(args(services="quotes"), REPO, devin, FakeIssue(rows=row("quotes", "stopped", "#13"))) == 0
     assert devin.created == []
+
+
+def test_dispatch_workflows_can_read_open_prs():
+    for name in ("logmig-run.yml", "logmig-stop.yml"):
+        assert workflow(name)[0]["permissions"].get("pull-requests") == "read", name
