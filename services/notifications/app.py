@@ -1,10 +1,11 @@
-import hl_log
+from harbor_obs import bind_request_id, get_logger
 
 SERVICE = "notifications"
+log = get_logger(SERVICE)
 
 
 def send_delivery_email(request_id, email, shipment_id):
-    hl_log.set_request(request_id)
+    bind_request_id(request_id)
     # (provider call omitted in this repo)
-    hl_log.info(SERVICE, f"sent delivery email to {email} for shipment {shipment_id}")
+    log.info("delivery_email_sent", shipment_id=shipment_id)
     return True
